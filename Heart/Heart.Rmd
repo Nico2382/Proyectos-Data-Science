@@ -1,0 +1,590 @@
+---
+title: "Heart"
+author: "Castillo Nicolas"
+date: "1/09/2024"
+output: 
+      html_document:
+             toc: true 
+             toc_float: true 
+             toc_collapsed: false 
+             toc_depth: 3 
+             #code_download: true 
+             theme: sandstone 
+runtime: shiny
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+## OBJETIVOS DEL TRABAJO
+
+Con el data set "Heart" se van a entrenar distintos modelos para ver cual
+es el que mejor predice si un paciente esta enfermo o no. 
+Luego se va a realizar un shiny para una mejor visualización de los datos, y de manera
+interactiva seleccionar las caracteristicas del paciente para que el modelo
+devuelva la predicción.
+
+Comencemos....
+
+## CARGA DE LIBRERIAS
+
+```{r carga de librerias, message=FALSE, warning=FALSE}
+library(DT)
+library(corrplot)
+library(plotly)
+library(ggplot2)
+library(reshape2)
+library(caTools)
+library(NeuralNetTools)
+library(neuralnet)
+library(caret)
+library(e1071)
+library(doParallel)
+library(randomForest)
+```
+
+## EL DATA SET
+
+Los datos fueron recopilados por el Dr. Robert Detrano, de la Cleveland Clinic Foundation.
+
+La base de datos está compuesta por 14 campos y 303 registros
+
+Age: edad del paciente (V. Cuantitativa discreta) 
+
+Sex: Genero del paciente (Categórica con dos niveles: 0=Femenino y 1=Masculino) 
+
+Cp:Tipo de dolor en el pecho (Categórica con 4 tipos) Tipo 0: Angina típica Tipo 1: Angina Atípica Tipo 2: Dolor no anginal Tipo 3: Asintomático
+
+trestbps: Presión arterial en reposo en mm Hg al ingreso al hospital (V.continua) 
+
+chol: Colesterol sérico en mg /dl (V. continua) 
+
+fbs: azúcar en sangre en ayunas 120 mg/dl (categórica con 2 niveles: verdadero, falso) 
+
+restecg: Resultados electrocardiográficos en reposo (Categórica con 3 niveles) Nivel 0: Normal Nivel 1: Tener anormalidad de onda ST-T
+(inversiones de onda T y / o elevación o Depresión de ST de 005 mV) Nivel 2: Muestra hipertropía ventricular izquierda probable o definitiva según los criterios de Estes.
+
+thalach: Frecuencia cardiaca máxima alcanzada (V. continua) 
+
+exang: Angina inducida por el ejercicio(Categórica con dos niveles: 1-Si, 0-No)
+
+oldpeak: Depresión del ST inducida por el ejercicio en relación con el descanso (V. continua)
+
+slope: La pendiente del segmento ST de ejercicio pico (categórica con 3 niveles) Valor 1: ascenso Valor 2: plano Valor 3: descenso
+
+ca: Numero de vasos principales (0-3) coloreados por fluoroscopia (Categórica con 4 niveles: 1-2-3-4) 
+
+thal: El estado del corazón según la prueba de Thallium (Categórica con 3 niveles) 1 = normal; 2 = defecto fijo 3 = defecto reversible
+
+num : Presencia de enfermedad cardíaca (estado de enfermedad angiográfica) (Categórica con 2 niveles) 0: Saludable 1: Enfermo
+
+
+```{r leer el data set, message=FALSE, warning=FALSE, include=FALSE}
+
+# leo el data frame
+df<-read.csv("heart.csv", header = TRUE, sep = ",")
+
+dfcol_frecuencia<-c("age","trestbps","chol","thalach","oldpeak")
+
+```
+
+```{r data table, message=FALSE, warning=FALSE}
+datatable(df)
+```
+
+
+## EDA
+
+### Estructura
+
+```{r estructura, message=FALSE, warning=FALSE, echo=TRUE}
+str(df)
+```
+
+### Nulos
+
+```{r nulos, message=FALSE, warning=FALSE, echo=TRUE}
+sapply(df, function (x) sum(is.na(x)))
+```
+
+### Escalar los datos y convertir a factor el objetivo
+
+```{r escalado, message=FALSE, warning=FALSE, echo=FALSE}
+#escalo los datos
+df_sc = as.data.frame(cbind(df$target, scale(df[ ,c(1:13)])))
+
+# renombro la columna objetivo porque me cambia de nombre el target
+names(df_sc)[1] = 'target'
+
+#convierto a factor el target
+df_sc$target <- as.factor(df_sc$target)
+```
+
+### Balanceo las clases
+
+```{r balanceo, message=FALSE, warning=FALSE, echo=TRUE}
+#balanceo las clases
+df_bal_max <- upSample(x = df_sc[, -which(names(df_sc) == 'target')],
+                                       y = df_sc$target)
+
+df_bal_max <- as.data.frame(df_bal_max)
+
+
+# renombro la columna objetivo
+names(df_bal_max)[14]<-'target'
+
+str(df_bal_max)
+```
+
+## MODELO LOGÍSTICO
+
+### Sin Balanceo de clases
+
+```{r LMSB, message=FALSE, warning=FALSE, echo=TRUE}
+set.seed(123)
+inicio <- Sys.time()
+
+index <- createDataPartition(df_sc$target, p=0.7, list=FALSE)
+
+datos_train_lmSB <- df_sc[index, ] 
+datos_test_lmSB <- df_sc[-index, ]
+
+modelo_lmSB <- caret::train(target~., datos_train_lmSB, method="glm", family=binomial) 
+fin <- Sys.time()
+tiempo_lmSB <- fin - inicio
+
+prediccioneslmSB <- predict(modelo_lmSB, datos_test_lmSB)
+
+conf_matrix_lmSB <- confusionMatrix(prediccioneslmSB,datos_test_lmSB$target)
+
+conf_matrix_lmSB
+```
+
+### Con balanceo de clases
+
+```{r LMCB, message=FALSE, warning=FALSE, echo=TRUE}
+
+set.seed(123)
+
+inicio <- Sys.time()
+
+index <- createDataPartition(df_bal_max$target, p=0.7, list=FALSE)
+
+datos_train_lm <- df_bal_max[index, ] 
+datos_test_lm <- df_bal_max[-index, ]
+
+modelo_log <- caret::train(target~., datos_train_lm, method="glm", family=binomial) 
+fin <- Sys.time()
+tiempo_lm <- fin - inicio
+
+predicciones_lm <- predict(modelo_log, datos_test_lm)
+
+(conf_matrix_lm <- confusionMatrix(predicciones_lm,datos_test_lm$target))
+
+```
+
+## MODELO SVM
+
+### Sin Balanceo de clases
+
+```{r SVMSB, message=FALSE, warning=FALSE, echo=TRUE}
+set.seed(123)
+inicio <- Sys.time()
+
+index_smv <- createDataPartition(df_sc$target, p=0.7, list=FALSE)
+
+datos_train_smvSB <- df_sc[index, ] 
+datos_test_smvSB <- df_sc[-index, ]
+
+modelo_svmSB <- svm(target ~., datos_train_smvSB)
+
+fin <- Sys.time()
+tiempo_svmSB <- fin - inicio
+
+predicciones_svmSB <- predict(modelo_svmSB, newdata=datos_test_smvSB)
+(conf_matrix_svmSB <- confusionMatrix(predicciones_svmSB,datos_test_smvSB$target))
+```
+
+
+### Con Balanceo de clases
+
+```{r SVMCB, message=FALSE, warning=FALSE, echo=TRUE}
+set.seed(123)
+
+inicio <- Sys.time()
+
+index_smv <- createDataPartition(df_bal_max$target, p=0.7, list=FALSE)
+
+datos_train_smv <- df_bal_max[index, ] 
+datos_test_smv <- df_bal_max[-index, ]
+
+modelo_svm <- svm(target ~., datos_train_smv)
+
+fin <- Sys.time()
+tiempo_svm <- fin - inicio
+
+predicciones_svm <- predict(modelo_svm, newdata=datos_test_smv)
+(conf_matrix_svm <- confusionMatrix(predicciones_svm,datos_test_smv$target))
+```
+### Tuneo del modelo smv
+Tunemos el modelo smv con diferentes costos, opciones de escalado y 4 tipos de kernel diferentes.
+
+```{r tuneo svm, message = FALSE, warning = FALSE , echo=TRUE}
+num_cores <- 4
+registerDoParallel(cores = num_cores)
+
+tune_ctrl <- tune.control(sampling = "cross", cross = 5)
+#
+ set.seed(123)
+ inicio <- Sys.time()
+ m.tune <- tune("svm", as.factor(target) ~., data = df_bal_max,
+                ranges = list(
+                  cost = c(0.001, 0.01, 0.1, 1, 2),
+                  scale=c(TRUE, FALSE),
+                  kernel=c("linear", "polynomial","radial", "sigmoid")),
+                tunecontrol = tune_ctrl
+                )
+ fin <- Sys.time()
+ tiempo_svm_tun <- fin - inicio
+
+#| Guardamos el modelo tuneado para no tener que generarlo en cada ejecución
+#| .
+#save(m.tune, file = "tune_svm.RData")
+
+#| Cargamos el modelo ya entrenado para agilizar el tiempo
+#| .
+#load("tune_svm.RData")
+
+summary(m.tune)
+
+```
+```{r entreno tuneo svm, message=FALSE, warning=FALSE, echo=TRUE}
+#entreno el modelo con el mejor kernel encontrado
+#| trainig SVM tuneado
+set.seed(123)
+
+split <- createDataPartition(df_bal_max$target, p=0.8, list=FALSE)
+datos_train_svmTUN <- df_bal_max[split, ]
+datos_test_svmTUN <- df_bal_max[-split, ]
+
+num_cores <- 4
+registerDoParallel(cores = num_cores)
+
+inicio <- Sys.time()
+modelo_svmTUN <- svm(target ~., datos_train_svmTUN, kernel="polynomial", cost=2, scale=TRUE)
+
+#| .
+#| Predecir con set de validacion
+prediccion_svmTUN <- predict(modelo_svmTUN, datos_test_svmTUN)
+fin <- Sys.time()
+tiempo_svmTUN <- fin - inicio
+
+#| .
+#| Evaluar resultados
+conf_svmTUN <- confusionMatrix(prediccion_svmTUN, datos_test_svmTUN$target)
+
+print(conf_svmTUN)
+```
+
+## MODELO RANDOM FOREST
+
+```{r RF grid search, message=FALSE, warning=FALSE, echo=TRUE}
+#|
+#| Paralelización para grid search 
+#| .
+num_cores <- 4  # Número deseado de hilos 
+registerDoParallel(cores = num_cores)
+
+#| .
+#| Entrenar el modelo con Grid Search
+set.seed(123)
+control_grid <- trainControl(method = "cv", number = 5)
+grid <- expand.grid(mtry = c(3, 6, 10, 14))
+
+inicio <- Sys.time()
+modelo_gridsearch <- train(target~ .,data = df_bal_max,
+                              method = "rf",
+                              tuneGrid = grid,
+                              trControl = control_grid)
+fin <- Sys.time()
+demora <- fin - inicio
+
+#| .
+#| model visualization
+modelo_gridsearch
+```
+```{r RF, message=FALSE, warning=FALSE, echo=TRUE}
+#| busqueda del optimo
+mtry_optimo <- as.numeric(modelo_gridsearch$bestTune)
+
+#| trainig grid search
+
+set.seed(123)
+
+split <- createDataPartition(df_bal_max$target, p=0.7, list=FALSE)
+
+datos_train_grid_rf <- df_bal_max[split, ]
+
+datos_test_grid_rf <- df_bal_max[-split, ]
+
+inicio <- Sys.time()
+modelo_grid_rf <- randomForest(target ~., datos_train_grid_rf, mtry= min(length(datos_train_grid_rf) - 1,mtry_optimo))
+
+#| .
+#| Predecir con set de validacion
+
+prediccion_grid_rf <- predict(modelo_grid_rf, datos_test_grid_rf)
+fin <- Sys.time()
+tiempo_rf <- fin - inicio
+
+#| .
+#| Evaluar resultados
+conf_grid_rf <- confusionMatrix(prediccion_grid_rf, datos_test_grid_rf$target)
+
+print(conf_grid_rf)
+```
+### Matriz de confusión RF
+
+```{r Matriz de confusión Random Forest, message=FALSE, warning=FALSE, echo=TRUE}
+#|
+#| visualizacion de matriz de confusion 
+#| .
+plot_ly(
+  type = "heatmap",
+  z = as.matrix(conf_grid_rf$table),
+  x = rownames(conf_grid_rf$table),
+  y = colnames(conf_grid_rf$table),
+  texttemplate = "<b>%{z}</b>",
+  colorscale = "YlGnBu",
+  colorbar = list(title="Count")
+) %>% 
+  layout(
+    title = "Matriz de Confusión Random Forest",
+    xaxis = list(title="Valor Predicho"),
+    yaxis = list(title="Valor Real")
+  )
+```
+
+
+## COMPARACIÓN DE MODELOS
+
+```{r Comparación de modelos, message=FALSE, warning=FALSE, echo=FALSE}
+#| 
+#| comparación de modelos
+#| .
+
+#| .
+#| Extraer accuracy de cada modelo
+accuracy_lmSB<- round(conf_matrix_lmSB$overall['Accuracy'],4)
+accuracy_lm  <- round(conf_matrix_lm$overall['Accuracy'],4)
+accuracy_SVMSB <- round(conf_matrix_svmSB$overall['Accuracy'],4)
+accuracy_SVM <- round(conf_matrix_svm$overall['Accuracy'],4)
+accuracy_SVM_tun <- round(conf_svmTUN$overall['Accuracy'],4)
+accuracy_rf <- round(conf_grid_rf$overall['Accuracy'],4)
+#| .
+#| Extraer PValue de cada modelo - mejor que sea un valor muy pequeño
+pvalue_lmSB <- round(conf_matrix_lmSB$overall['AccuracyPValue'],4)
+pvalue_lm  <- round(conf_matrix_lm$overall['AccuracyPValue'],4)
+pvalue_SVMSB <- round(conf_matrix_svmSB$overall['AccuracyPValue'],4)
+pvalue_SVM <- round(conf_matrix_svm$overall['AccuracyPValue'],4)
+pvalue_SVM_tun <- round(conf_svmTUN$overall['AccuracyPValue'],4)
+pvalue_rf <- round(conf_grid_rf$overall['AccuracyPValue'],4)
+#| .
+#| Extraer Kappa de cada modelo
+kappa_lmSB <-  round(conf_matrix_lmSB$overall['Kappa'],4)
+kappa_lm  <-  round(conf_matrix_lm$overall['Kappa'],4)
+kappa_SVMSB <-  round(conf_matrix_svmSB$overall['Kappa'],4)
+kappa_SVM <-  round(conf_matrix_svm$overall['Kappa'],4)
+kappa_SVM_tun <-  round(conf_svmTUN$overall['Kappa'],4)
+kappa_rf <-  round(conf_grid_rf$overall['Kappa'],4)
+#| .
+#| Extraer Sensitivity de cada modelo
+sens_lmSB <- round(conf_matrix_lmSB$byClass['Sensitivity'],4)
+sens_lm <- round(conf_matrix_lm$byClass['Sensitivity'],4)
+sens_SVMSB <- round(conf_matrix_svmSB$byClass['Sensitivity'],4)
+sens_SVM <- round(conf_matrix_svm$byClass['Sensitivity'],4)
+sens_SVM_tun <- round(conf_svmTUN$byClass['Sensitivity'],4)
+sens_rf <- round(conf_grid_rf$byClass['Sensitivity'],4)
+#| .
+#| Extraer Specificity de cada modelo
+spec_lmSB <- round(conf_matrix_lmSB$byClass['Specificity'],4)
+spec_lm <- round(conf_matrix_lm$byClass['Specificity'],4)
+spec_SVMSB <- round(conf_matrix_svmSB$byClass['Specificity'],4)
+spec_SVM <- round(conf_matrix_svm$byClass['Specificity'],4)
+spec_SVM_tun <- round(conf_svmTUN$byClass['Specificity'],4)
+spec_rf<- round(conf_grid_rf$byClass['Specificity'],4)
+
+```
+
+## Creación del data frame
+
+```{r crear dataframe con valores de accuracy, message = FALSE, warning = FALSE ,echo=FALSE}
+#| 
+#| crear dataframe con valores de accuracy
+#| .
+accuracy_df <- data.frame(
+  Modelo = c("Modelo lmSB", "Modelo lm","Modelo SVMSB","Modelo SVM","Modelo SVM_tun","Modelo rf"),
+  Accuracy = c(accuracy_lmSB,accuracy_lm,accuracy_SVMSB,accuracy_SVM,accuracy_SVM_tun,accuracy_rf),
+  PValue = c(pvalue_lmSB,pvalue_lm,pvalue_SVMSB,pvalue_SVM,pvalue_SVM_tun,pvalue_rf),
+  Kappa = c(kappa_lmSB,kappa_lm,kappa_SVMSB,kappa_SVM,kappa_SVM_tun,kappa_rf),
+  Sensitivity=c(sens_lmSB,sens_lm,sens_SVMSB,sens_SVM,sens_SVM_tun,sens_rf),
+  Specificity=c(spec_lmSB,spec_lm,spec_SVMSB,spec_SVM,spec_SVM_tun,spec_rf),
+  Tiempos = c(round(tiempo_lmSB,4), round(tiempo_lm,4), round(tiempo_svmSB,4),round(tiempo_svm,4),round( tiempo_svm_tun,4),round(tiempo_rf,4))
+)
+
+#|
+#| Mostrar el data frame
+datatable(accuracy_df)
+
+```
+
+
+```{r Guardar archivo, message=FALSE, warning=FALSE, echo=FALSE}
+# Guardamos el accuracy_df para no poder pasarlo al shiny
+
+#write.csv(accuracy_df, file = "Accuracy_heart.csv", row.names = FALSE)
+
+```
+
+
+## Gráfica de comparación de modelos
+
+```{r Gráfica de comparación de modelos, message=FALSE, warning=FALSE, echo=FALSE}
+#| 
+#| graficar los valores de accuracy
+#| .
+comp<-ggplot(accuracy_df, aes(x = Modelo, y = Accuracy, fill = Modelo)) +
+  geom_bar(stat = "identity") +
+  labs(
+       x = "Modelos",
+       y = "Accuracy")+
+ 
+   coord_flip() 
+  
+gi6 <-ggplotly(comp)
+
+#| .
+#| Graficar los valores de Sensitivity
+comp<-ggplot(accuracy_df, aes(x = Modelo, y = Sensitivity, fill = Modelo)) +
+  geom_bar(stat = "identity") +
+  labs(x = "Modelos",
+       y = "Sensitivity")+
+  coord_flip() 
+gi7 <-ggplotly(comp)
+
+#| .
+#| Graficar los valores de Specificity
+comp<-ggplot(accuracy_df, aes(x = Modelo, y = Specificity, fill = Modelo)) +
+  geom_bar(stat = "identity") +
+  labs(x = "Modelos",
+       y = "Specificity")+
+  coord_flip() 
+gi8 <-ggplotly(comp)
+
+#|
+#| Graficar los valores de Tiempos
+comp<-ggplot(accuracy_df, aes(x = Modelo, y = Tiempos, fill = Modelo)) +
+  geom_bar(stat = "identity") +
+  labs(x = "Modelos",
+       y = "Tiempos")+
+  coord_flip() 
+gi9 <-ggplotly(comp)
+
+
+# agregar titulos
+annotations = list( 
+  list( 
+    x = 0.2,  
+    y = 1.0,  
+    text = "ACCURACY",  
+    xref = "paper",  
+    yref = "paper",  
+    xanchor = "center",  
+    yanchor = "bottom",  
+    showarrow = FALSE 
+  ),  
+  list( 
+    x = 0.8,  
+    y = 1,  
+    text = "SENSITIVITY",  
+    xref = "paper",  
+    yref = "paper",  
+    xanchor = "center",  
+    yanchor = "bottom",  
+    showarrow = FALSE 
+  ),  
+  list( 
+    x = 0.2,  
+    y = 0.4,  
+    text = "SPECIFICITY",  
+    xref = "paper",  
+    yref = "paper",  
+    xanchor = "center",  
+    yanchor = "bottom",  
+    showarrow = FALSE 
+  ),
+  list( 
+    x = 0.8,
+    y = 0.4,  
+    text = "TIEMPOS",  
+    xref = "paper",  
+    yref = "paper",  
+    xanchor = "center",  
+    yanchor = "bottom",  
+    showarrow = FALSE
+    
+  ))
+
+
+
+#|
+#| Crear la grilla de gráficos
+subplot(gi6, gi7, gi8, gi9, nrows = 2, margin = 0.08) %>% 
+  layout(showlegend = FALSE, annotations = annotations) 
+
+```
+
+## PREDICCIÓN
+
+```{r Predicción1, message=FALSE, warning=FALSE, echo=TRUE}
+
+# Armo un vector para predecir
+vect <- c(44, 1, 1, 120, 2363, 0, 1, 173, 0, 0.0, 2, 0, 2)
+
+# coloco los nombes a los campos
+df_eval <- data.frame(t(vect))
+    colnames(df_eval) <- c("age", "sex", "cp", "trestbps", "chol", "fbs", "restecg", "thalach", "exang", "oldpeak", "slope", "ca", "thal")
+
+```
+
+```{r Predicción2, message=FALSE, warning=FALSE, echo=FALSE}
+# Tomar el data frame datos_train_grid_rf y le quito la columna target
+df_train_scaled_no_target <- datos_train_grid_rf [, -which(names(datos_train_grid_rf ) == "target")]
+
+# Extraer los valores de escalado
+mean_vals <- colMeans(df[, c(1:13)], na.rm = TRUE)
+std_vals <- apply(df[, c(1:13)], 2, sd, na.rm = TRUE)
+
+```
+
+
+```{r Predicción3, message=FALSE, warning=FALSE, echo=TRUE}
+# Escalar el nuevo registro
+df_eval_scaled <- as.data.frame(scale(df_eval, center = mean_vals, scale = std_vals))
+
+# Realizar la predicción
+prediccion_eval <- predict(modelo_grid_rf, df_eval_scaled)
+if(prediccion_eval=="0"){
+  print("paciente sano")
+}else{
+  print("paciente enfermo")
+}
+
+
+```
+
+
+
+
+
+
